@@ -1,0 +1,253 @@
+# DASHlink Project Configuration
+
+data:
+  raw_dir: "data/raw/"
+  processed_dir: "data/processed/telemetry"
+  metadata_dir: "data/processed"
+  database_path: "data/dashlink.duckdb"
+
+processing:
+  batch_size: 10
+  compression: "snappy"
+  parallel_workers: 4
+
+signals:
+  # TIER 1: Flight Safety Critical - Immediate safety-of-flight indicators
+  safety_critical:
+    priority: 1
+    description: "Immediate safety-of-flight indicators"
+    signals:
+      - ALT
+      - RALT
+      - BAL1
+      - BAL2
+      - CAS
+      - MACH
+      - AOA1
+      - AOA2
+      - AOAC
+      - AOAI
+      - SHKR
+      - PUSH
+      - GPWS
+      - WSHR
+      - WOW
+      - FIRE_1
+      - FIRE_2
+      - FIRE_3
+      - FIRE_4
+      - APUF
+      - MW
+      - TCAS
+      - CALT
+      - POVT
+      - SMOK
+      - SMKB
+      - TOCW
+
+  # TIER 2: Engine Health - Critical for powerplant analysis
+  engine_health:
+    priority: 2
+    description: "Engine performance and health monitoring"
+    signals:
+      - N1_1
+      - N1_2
+      - N1_3
+      - N1_4
+      - N2_1
+      - N2_2
+      - N2_3
+      - N2_4
+      - EGT_1
+      - EGT_2
+      - EGT_3
+      - EGT_4
+      - FF_1
+      - FF_2
+      - FF_3
+      - FF_4
+      - OIP_1
+      - OIP_2
+      - OIP_3
+      - OIP_4
+      - OIT_1
+      - OIT_2
+      - OIT_3
+      - OIT_4
+      - VIB_1
+      - VIB_2
+      - VIB_3
+      - VIB_4
+      - N1T
+      - N1C
+      - N1CO
+      - OIPL
+      - FADF
+      - FADS
+      - ECYC_1
+      - ECYC_2
+      - ECYC_3
+      - ECYC_4
+      - EHRS_1
+      - EHRS_2
+      - EHRS_3
+      - EHRS_4
+
+  # TIER 3: Flight Performance - Core flight dynamics
+  flight_performance:
+    priority: 3
+    description: "Aircraft state and performance metrics"
+    signals:
+      - PTCH
+      - ROLL
+      - MH
+      - TH
+      - IVV
+      - ALTR
+      - GS
+      - TAS
+      - VRTG
+      - LATG
+      - LONG
+      - BLAC
+      - FPAC
+      - CTAC
+      - TRK
+      - TRKM
+      - DA
+
+  # TIER 4: Flight Controls - Pilot inputs & control surfaces
+  flight_controls:
+    priority: 4
+    description: "Control inputs and surface deflections"
+    signals:
+      - CCPC
+      - CCPF
+      - CWPC
+      - CWPF
+      - RUDP
+      - AIL_1
+      - AIL_2
+      - ELEV_1
+      - ELEV_2
+      - RUDD
+      - FLAP
+      - SPL_1
+      - SPL_2
+      - SPLG
+      - SPLY
+      - ABRK
+      - PTRM
+      - PLA_1
+      - PLA_2
+      - PLA_3
+      - PLA_4
+
+  # TIER 5: Autopilot/Flight Management
+  automation:
+    priority: 5
+    description: "Autopilot and flight management status"
+    signals:
+      - APFD
+      - ATEN
+      - A_T
+      - LMOD
+      - VMODE
+      - TMODE
+      - DFGS
+      - FGC3
+      - ALTS
+      - CASS
+      - CASM
+      - MNS
+      - HDGS
+      - VSPS
+
+  # TIER 6: Navigation
+  navigation:
+    priority: 6
+    description: "Navigation and approach guidance"
+    signals:
+      - LATP
+      - LONP
+      - LOC
+      - GLS
+      - DWPT
+      - CRSS
+      - ILSF
+      - MRK
+      - TMAG
+
+  # TIER 7: Aircraft Systems
+  systems:
+    priority: 7
+    description: "Aircraft systems status"
+    signals:
+      - HYDG
+      - HYDY
+      - BPGR_1
+      - BPGR_2
+      - BPYR_1
+      - BPYR_2
+      - LGDN
+      - LGUP
+      - MSQT_1
+      - MSQT_2
+      - NSQT
+      - PACK
+      - BLV
+      - FQTY_1
+      - FQTY_2
+      - FQTY_3
+      - FQTY_4
+      - EAI
+      - TAI
+      - WAI_1
+      - WAI_2
+      - VHF1
+      - VHF2
+      - VHF3
+      - HF1
+      - HF2
+
+  # TIER 8: Environmental
+  environmental:
+    priority: 8
+    description: "Atmospheric conditions"
+    signals:
+      - SAT
+      - TAT
+      - WS
+      - WD
+      - PS
+      - PT
+      - PI
+      - PSA
+
+  # TIER 9: Flight Phase & Recording Metadata
+  metadata:
+    priority: 9
+    description: "Flight phase, timing, and recording metadata"
+    signals:
+      - PH
+      - EVNT
+      - FRMC
+      - ACMT
+      - ACID
+      - SNAP
+      - GMT_HOUR
+      - GMT_MINUTE
+      - GMT_SEC
+      - DATE_YEAR
+      - DATE_MONTH
+      - DATE_DAY
+      - DVER_1
+      - DVER_2
+      - ESN_1
+      - ESN_2
+      - ESN_3
+      - ESN_4
+
+logging:
+  level: "INFO"
+  log_dir: "logs"
