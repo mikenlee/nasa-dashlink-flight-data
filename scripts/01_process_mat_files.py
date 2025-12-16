@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
 """
 Process all DASHlink MAT files into partitioned Parquet format.
 
 Usage:
     python scripts/01_process_mat_files.py
-    python scripts/01_process_mat_files.py --config config/config.yaml
+    python scripts/01_process_mat_files.py --config 
+config/config.yaml
 """
 
 import polars as pl
@@ -14,7 +14,8 @@ from tqdm import tqdm
 import yaml
 import argparse
 import re
-from typing import Dict, List
+import json
+from typing import Dict
 from collections import defaultdict
 import sys
 
@@ -44,13 +45,21 @@ def load_config(config_path: str) -> Dict:
 def parse_source_folder(folder_name: str) -> tuple:
     """
     Parse source folder name like 'Tail_652_1' into (tail_number, batch).
-    
-    Returns:
-        Tuple of (tail_number, batch_number) e.g., ('652', 1)
     """
-    match = re.match(r'Tail_(\d+)_(\d+)', folder_name)
+    match = re.search(r'Tail_\s*(\d+)\s*_\s*(\d+)', folder_name, flags=re.IGNORECASE)
     if match:
         return match.group(1), int(match.group(2))
+    return None, None
+
+
+def extract_tail_batch_from_path(mat_file: Path) -> tuple:
+    """
+    Extract (tail_number, batch_num) from any ancestor directory name.
+    """
+    for parent in mat_file.parents:
+        tail_number, batch_num = parse_source_folder(parent.name)
+        if tail_number is not None:
+            return tail_number, batch_num
     return None, None
 
 
@@ -62,14 +71,7 @@ def process_all_mat_files(
 ) -> None:
     """
     Process all MAT files in batches.
-    
-    Args:
-        input_dir: Directory containing MAT files
-        output_dir: Directory for output Parquet files
-        batch_size: Number of files to process before checkpointing
-        config_path: Path to config file
     """
-    # Find all MAT files
     mat_files = list(input_dir.glob('**/*.mat'))
     logger.info(f"Found {len(mat_files)} MAT files")
 
@@ -77,51 +79,41 @@ def process_all_mat_files(
         logger.error("No MAT files found!")
         return
 
-    # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Group files by tail number and batch
-    # Structure: {tail_number: {batch: [files]}}
+    # Group files by tail number and batch: {tail: {batch: [files]}}
     files_by_tail_batch = defaultdict(lambda: defaultdict(list))
 
     for mat_file in mat_files:
-        # Get tail and batch from parent folder name (e.g., Tail_652_1)
-        folder_name = mat_file.parent.name
-        tail_number, batch_num = parse_source_folder(folder_name)
+        tail_number, batch_num = extract_tail_batch_from_path(mat_file)
 
         if tail_number is None:
-            # Fallback: extract from filename
             tail_number = mat_file.stem[:3]
             batch_num = 1
-            logger.warning(f"Could not parse folder '{folder_name}', using tail={tail_number}, batch={batch_num}")
+            logger.warning(f"Could not parse path for '{mat_file}', using tail={tail_number}, batch={batch_num}")
+
 
         files_by_tail_batch[tail_number][batch_num].append(mat_file)
 
-    # Sort files within each batch by filename
+    # Sort files within each batch
     for tail_number in files_by_tail_batch:
         for batch_num in files_by_tail_batch[tail_number]:
-            files_by_tail_batch[tail_number][batch_num].sort(key=lambda f: f.stem)
+            files_by_tail_batch[tail_number][batch_num].sort(key=lambda f:f.name)
 
     # Log structure
-    logger.info(f"Found {len(files_by_tail_batch)} unique tail numbers:")
+    logger.info(f"Found {len(files_by_tail_batch)} unique tail numbers")
     for tail, batches in sorted(files_by_tail_batch.items()):
-        batch_info = ", ".join([f"batch {b}: {len(files)} files" for b, files in
-sorted(batches.items())])
-        logger.info(f"  Tail {tail}: {batch_info}")
+        total = sum(len(files) for files in batches.values())
+        logger.info(f"  Tail {tail}: {len(batches)} batches, {total} flights")
 
-    # Track progress
+    # Process
     flight_metadata = []
     failed_files = []
-    flights_per_tail = defaultdict(int)
     processed_count = 0
-    total_files = len(mat_files)
 
-    # Process by tail number and batch
     for tail_number in tqdm(sorted(files_by_tail_batch.keys()), desc="Processing tails"):
-        batches = files_by_tail_batch[tail_number]
-
-        for batch_num in sorted(batches.keys()):
-            batch_files = batches[batch_num]
+        for batch_num in sorted(files_by_tail_batch[tail_number].keys()):
+            batch_files = files_by_tail_batch[tail_number][batch_num]
 
             for flight_num, mat_file in enumerate(batch_files, start=1):
                 try:
@@ -131,14 +123,6 @@ sorted(batches.items())])
                         failed_files.append(str(mat_file))
                         continue
 
-                    # Add batch and flight number to dataframe
-                    df = df.with_columns([
-                        pl.lit(batch_num).alias('batch'),
-                        pl.lit(flight_num).alias('flight_number')
-                    ])
-
-                    # Save to partitioned parquet
-                    # Structure: tail_number=XXX/batch=Y/flight_ZZZ.parquet
                     output_path = (
                         output_dir
                         / f"tail_number={tail_number}"
@@ -147,68 +131,51 @@ sorted(batches.items())])
                     )
                     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-                    df.write_parquet(output_path, compression='snappy')
+                    # Use zstd compression for better compression ratio
+                    df.write_parquet(output_path, compression='zstd', compression_level=3)
 
-                    # Add to metadata
-                    metadata['batch'] = batch_num
-                    metadata['flight_number'] = flight_num
-                    metadata['source_folder'] = mat_file.parent.name
-                    flight_metadata.append(metadata)
-                    flights_per_tail[tail_number] += 1
+                    # Prepare metadata for storage (convert signal_metadata to JSON string)
+                    flat_metadata = {k: v for k, v in metadata.items() if k != 'signal_metadata'}
+                    flat_metadata['batch'] = batch_num
+                    flat_metadata['flight_number'] = flight_num
+                    flat_metadata['source_folder'] = mat_file.parent.name
+                    flat_metadata['signal_metadata_json'] = json.dumps(metadata.get('signal_metadata', {}))
 
+                    flight_metadata.append(flat_metadata)
                     processed_count += 1
 
-                    # Checkpoint
                     if processed_count % batch_size == 0:
-                        logger.info(f"Checkpoint: Processed {processed_count}/{total_files} files")
-                        pl.DataFrame(flight_metadata).write_parquet(output_dir /
-"checkpoint.parquet")
+                        logger.info(f"Checkpoint: {processed_count}/{len(mat_files)} files")
+                        
+                        pl.DataFrame(flight_metadata).write_parquet(output_dir / "checkpoint.parquet")
 
                 except Exception as e:
                     logger.error(f"Failed to process {mat_file.name}: {e}")
                     failed_files.append(str(mat_file))
 
-    # Create tail summary
-    tail_summary = [
-        {'tail_number': tail, 'num_flights': count, 'num_batches': len(files_by_tail_batch[tail])}
-        for tail, count in sorted(flights_per_tail.items())
-    ]
-    tail_summary_df = pl.DataFrame(tail_summary)
+    # Build tail summary
+    tail_summary = pl.DataFrame([
+        {
+            'tail_number': tail,
+            'num_batches': len(batches),
+            'num_flights': sum(len(files) for files in batches.values())
+        }
+        for tail, batches in sorted(files_by_tail_batch.items())
+    ])
 
-    # Save final metadata
+    # Save metadata
     if flight_metadata:
-        metadata_df = pl.DataFrame(flight_metadata)
+        metadata_df = pl.DataFrame(flight_metadata).join(tail_summary, on='tail_number', how='left')
+        metadata_df.write_parquet(output_dir.parent / "flight_metadata.parquet")
+        tail_summary.write_parquet(output_dir.parent / "tail_summary.parquet")
+        logger.info(f"Saved flight_metadata.parquet and tail_summary.parquet")
 
-        # Join with tail summary
-        metadata_df = metadata_df.join(
-            tail_summary_df,
-            on='tail_number',
-            how='left'
-        )
-
-        metadata_path = output_dir.parent / "flight_metadata.parquet"
-        metadata_df.write_parquet(metadata_path)
-        logger.info(f"Flight metadata saved to {metadata_path}")
-
-        # Save tail summary
-        tail_summary_path = output_dir.parent / "tail_summary.parquet"
-        tail_summary_df.write_parquet(tail_summary_path)
-        logger.info(f"Tail summary saved to {tail_summary_path}")
-
-    # Clean up checkpoint
+    # Cleanup checkpoint
     checkpoint_path = output_dir / "checkpoint.parquet"
     if checkpoint_path.exists():
         checkpoint_path.unlink()
 
-    # Final summary
-    logger.info(f"✓ Processed {len(flight_metadata)} files")
-    logger.info(f"✗ Failed {len(failed_files)} files")
-    logger.info("Structure created:")
-    for tail in sorted(files_by_tail_batch.keys()):
-        batches = files_by_tail_batch[tail]
-        for batch_num in sorted(batches.keys()):
-            num_flights = len(batches[batch_num])
-            logger.info(f"  tail_number={tail}/batch={batch_num}/ -> {num_flights} flights")
+    logger.info(f"✓ Processed {len(flight_metadata)} files, ✗ Failed {len(failed_files)} files")
 
     if failed_files:
         with open('logs/failed_files.txt', 'w') as f:
@@ -246,3 +213,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

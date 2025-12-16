@@ -19,15 +19,10 @@ SYNC_WORDS = {'VAR_1107', 'VAR_2670', 'VAR_5107', 'VAR_6670'}
 _SIGNAL_CATEGORIES = None
 
 
-def load_signal_categories(config_path: str = 'config/config.yaml') -> Dict:
+def load_signal_categories(config_path: str = 
+'config/config.yaml') -> Dict:
     """
     Load signal categories from config file.
-    
-    Args:
-        config_path: Path to config YAML file
-        
-    Returns:
-        Dictionary of signal categories
     """
     global _SIGNAL_CATEGORIES
 
@@ -46,20 +41,12 @@ def load_signal_categories(config_path: str = 'config/config.yaml') -> Dict:
     return _SIGNAL_CATEGORIES
 
 
-def categorize_signal(signal_name: str, config_path: str = 'config/config.yaml') -> Tuple[str, int, 
-str]:
+def categorize_signal(signal_name: str, config_path: str = 'config/config.yaml') -> Tuple[str, int, str]:
     """
     Return category, priority, and description for a signal name.
-    
-    Args:
-        signal_name: Name of the signal
-        config_path: Path to config file
-        
-    Returns:
-        Tuple of (category, priority, category_description)
     """
     categories = load_signal_categories(config_path)
-    clean_name = signal_name.replace('.data', '').replace('.', '_').upper()
+    clean_name = signal_name.replace('.data', '').replace('.','_').upper()
 
     for category, info in categories.items():
         signals = info.get('signals', [])
@@ -81,11 +68,12 @@ def extract_flight_info(filename: str) -> Dict[str, str]:
     -> tail: 687, date: 2004-03-25, time: 16:02
     """
     stem = Path(filename).stem
-    year = stem[3:7]
-    month = stem[7:9]
-    day = stem[9:11]
-    hour = stem[10:13] if len(stem) >= 11 else '00'
-    minute = stem[12:14] if len(stem) >= 13 else '00'
+
+    year = '20' + stem[3:5]
+    month = stem[5:7]
+    day = stem[7:9]
+    hour = stem[9:11] if len(stem) >= 11 else '00'
+    minute = stem[11:13] if len(stem) >= 13 else '00'
 
     return {
         'tail_number': stem[:3],
@@ -100,166 +88,182 @@ def extract_flight_info(filename: str) -> Dict[str, str]:
     }
 
 
-
 def process_mat_file(
-      mat_file: Path,
-      config_path: str = 'config/config.yaml'
-  ) -> Tuple[pl.DataFrame, Dict]:
-      """
-      Process a single MAT file into Polars DataFrame.
-      
-      Args:
-          mat_file: Path to MAT file
-          config_path: Path to config file for signal categories
-          
-      Returns:
-          Tuple of (DataFrame, metadata_dict)
-      """
-      logger.debug(f"Processing {mat_file.name}")
+    mat_file: Path,
+    config_path: str = 'config/config.yaml'
+) -> Tuple[pl.DataFrame, Dict]:
+    """
+    Process a single MAT file into wide-format Polars DataFrame.
+    
+    Each signal becomes a column, rows are time samples.
+    This is much more space-efficient than long format.
+    
+    Args:
+        mat_file: Path to MAT file
+        config_path: Path to config file for signal categories
+        
+    Returns:
+        Tuple of (DataFrame, metadata_dict)
+    """
+    logger.debug(f"Processing {mat_file.name}")
 
-      # Load MAT file
-      mat_data = scipy.io.loadmat(
-          str(mat_file),
-          squeeze_me=True,
-          struct_as_record=False
-      )
+    mat_data = scipy.io.loadmat(
+        str(mat_file),
+        squeeze_me=True,
+        struct_as_record=False
+    )
 
-      # Extract flight info from filename
-      flight_info = extract_flight_info(mat_file.name)
-      tail_number = flight_info['tail_number']
+    flight_info = extract_flight_info(mat_file.name)
+    tail_number = flight_info['tail_number']
 
-      # Storage for processed data
-      signal_dfs = []
+    # Collect signals as columns (wide format)
+    signal_data = {}
+    signal_metadata = {}  # Store per-signal metadata separately
+    max_length = 0
 
-      for signal_name, value in mat_data.items():
-          # Skip metadata keys and sync words
-          if signal_name.startswith('__') or signal_name in SYNC_WORDS:
-              continue
+    for signal_name, value in mat_data.items():
+        if signal_name.startswith('__') or signal_name in SYNC_WORDS:
+            continue
 
-          # Get category info
-          category, priority, _ = categorize_signal(signal_name, config_path)
+        try:
+            if hasattr(value, '__dict__'):
+                struct_data = value.__dict__
+                if 'data' not in struct_data:
+                    continue
 
-          try:
-              # Handle structured data (MATLAB structs)
-              if hasattr(value, '__dict__'):
-                  struct_data = value.__dict__
+                data = struct_data['data']
 
-                  if 'data' not in struct_data:
-                      continue
+                # Extract signal metadata
+                rate = struct_data.get('Rate', struct_data.get('rate', 1.0))
+                if hasattr(rate, 'item'):
+                    rate = rate.item()
+                rate = float(rate) if rate else 1.0
 
-                  signal_data = struct_data['data']
+                units = struct_data.get('Units', struct_data.get('units', ''))
+                if hasattr(units, 'item'):
+                    units = str(units)
+                units = str(units) if units else ''
 
-                  # Get sampling rate
-                  rate = struct_data.get('Rate', struct_data.get('rate', 1.0))
-                  if hasattr(rate, 'item'):
-                      rate = rate.item()
-                  rate = float(rate) if rate else 1.0
+                description = struct_data.get('Description', struct_data.get('description', ''))
+                if hasattr(description, 'item'):
+                    description = str(description)
+                description = str(description) if description else ''
 
-                  # Get units
-                  units = struct_data.get('Units', struct_data.get('units', ''))
-                  if hasattr(units, 'item'):
-                      units = str(units)
-                  units = str(units) if units else 'unknown'
+                category, priority, _ = categorize_signal(signal_name, config_path)
 
-                  # Get description
-                  description = struct_data.get('Description', struct_data.get('description', ''))
-                  if hasattr(description, 'item'):
-                      description = str(description)
-                  description = str(description) if description else ''
+                signal_metadata[signal_name] = {
+                    'rate_hz': rate,
+                    'units': units,
+                    'description': description,
+                    'category': category,
+                    'priority': priority,
+                }
 
-              # Handle raw arrays
-              elif isinstance(value, np.ndarray):
-                  signal_data = value
-                  rate = 1.0
-                  units = 'unknown'
-                  description = ''
-              else:
-                  continue
+            elif isinstance(value, np.ndarray):
+                data = value
+                signal_metadata[signal_name] = {
+                    'rate_hz': 1.0,
+                    'units': '',
+                    'description': '',
+                    'category': 'uncategorized',
+                    'priority': 99,
+                }
+            else:
+                continue
 
-              # Process only 1D arrays
-              if not isinstance(signal_data, np.ndarray) or signal_data.ndim != 1:
-                  continue
+            if not isinstance(data, np.ndarray) or data.ndim !=1:
+                continue
 
-              # Convert to float64
-              try:
-                  float_values = signal_data.astype(np.float64)
-              except (ValueError, TypeError):
-                  continue
+            try:
+                signal_data[signal_name] = data.astype(np.float32)  # float32 saves space
+                max_length = max(max_length, len(data))
+            except (ValueError, TypeError):
+                continue
 
-              n_samples = len(signal_data)
-              indices = np.arange(n_samples, dtype=np.int64)
-              time_seconds = indices / rate
+        except Exception as e:
+            logger.warning(f"Could not extract {signal_name} from {mat_file.name}: {e}")
 
-              # Build DataFrame for this signal
-              df_dict = {
-                  'tail_number': tail_number,
-                  'flight_id': flight_info['flight_id'],
-                  'signal_name': signal_name,
-                  'description': description,
-                  'units': units,
-                  'category': category,
-                  'priority': priority,
-                  'value': float_values,
-                  'sample_index': indices,
-                  'time_seconds': time_seconds,
-                  'rate_hz': float(rate),
-              }
+    if not signal_data:
+        logger.warning(f"No valid signals extracted from {mat_file.name}")
+        return None, flight_info
 
-              signal_dfs.append(pl.DataFrame(df_dict))
+    # Pad shorter signals to max_length (handles different sample rates)
+    for name, data in signal_data.items():
+        if len(data) < max_length:
+            signal_data[name] = np.pad(data, (0, max_length - len(data)), constant_values=np.nan)
 
-          except Exception as e:
-              logger.warning(f"Could not extract {signal_name} from {mat_file.name}: {e}")
+    # Create wide DataFrame
+    df = pl.DataFrame(signal_data)
 
-      if not signal_dfs:
-          logger.warning(f"No valid signals extracted from {mat_file.name}")
-          return None, flight_info
+    # Add sample index
+    df = df.with_columns([
+        pl.int_range(pl.len()).cast(pl.Int32).alias('sample_index'),
+    ])
 
-      # Combine all signals
-      combined_df = pl.concat(signal_dfs, how="vertical_relaxed")
+    # Reorder columns: sample_index first, then signals alphabetically
+    signal_cols = sorted([c for c in df.columns if c !='sample_index'])
+    df = df.select(['sample_index'] + signal_cols)
 
-      # Add flight date
-      combined_df = combined_df.with_columns([
-          pl.lit(flight_info['date']).alias('date'),
-      ])
+    # Prepare metadata
+    metadata = {
+        **flight_info,
+        'num_samples': len(df),
+        'num_signals': len(signal_data),
+        'file_path': str(mat_file),
+        'signal_metadata': signal_metadata,  # Nested dict with per-signal info
+    }
 
-      # Prepare metadata
-      metadata = {
-          **flight_info,
-          'tail_number': tail_number,
-          'num_samples': len(combined_df),
-          'num_signals': combined_df.select('signal_name').n_unique(),
-          'file_path': str(mat_file),
-      }
+    return df, metadata
 
-      return combined_df, metadata
+
+def get_signal_info(metadata: Dict) -> pl.DataFrame:
+    """
+    Extract signal metadata from flight metadata as a DataFrame.
+    
+    Useful for looking up signal descriptions, units, rates, etc.
+    
+    Args:
+        metadata: Metadata dict from process_mat_file
+        
+    Returns:
+        DataFrame with signal_name, rate_hz, units, description, category, priority
+    """
+    signal_metadata = metadata.get('signal_metadata', {})
+
+    records = [
+        {
+            'signal_name': name,
+            **info
+        }
+        for name, info in signal_metadata.items()
+    ]
+
+    return pl.DataFrame(records).sort('priority', 'signal_name')
 
 
 def validate_data(df: pl.DataFrame) -> Dict[str, any]:
     """
     Validate processed data and return quality metrics.
-    
-    Args:
-        df: Processed flight data
-        
-    Returns:
-        Dictionary of validation metrics
     """
+    # Count signal columns (exclude sample_index)
+    signal_cols = [c for c in df.columns if c != 'sample_index']
+
+    # Calculate null percentage across all signal columns
+    total_cells = len(df) * len(signal_cols)
+    null_count = sum(df.select(c).null_count().item() for c in signal_cols)
+
     metrics = {
         'num_rows': len(df),
-        'num_cols': len(df.columns),
-        'num_signals': df.select('signal_name').n_unique() if 'signal_name' in df.columns else 0,
-        'missing_pct': (df.null_count().sum_horizontal()[0] / (len(df) * len(df.columns)) * 100),
+        'num_signals': len(signal_cols),
+        'null_pct': (null_count / total_cells * 100) if total_cells > 0 else 0,
         'memory_mb': df.estimated_size('mb')
     }
 
     # Check for anomalies in EGT if present
-    if 'signal_name' in df.columns and 'value' in df.columns:
-        egt_data = df.filter(pl.col('signal_name') == 'EGT_1')
-        if egt_data.height > 0:
-            metrics['egt_min'] = egt_data.select('value').min().item()
-            metrics['egt_max'] = egt_data.select('value').max().item()
-            metrics['egt_outliers'] = egt_data.filter(
-                (pl.col('value') < 0) | (pl.col('value') > 1000)
-            ).height
+    if 'EGT_1' in df.columns:
+        egt = df.select('EGT_1').to_series()
+        metrics['egt_min'] = egt.min()
+        metrics['egt_max'] = egt.max()
+        metrics['egt_outliers'] = egt.filter((egt < 0) | (egt > 1000)).len()
 
     return metrics
