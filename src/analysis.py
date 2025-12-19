@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 from typing import List, Optional, Tuple
-
+from src.config import get_path, PATHS
 
 def plot_altitude_profile(df: pl.DataFrame, title: str = None):
     alt = df.select(['sample_index', 'ALT']).to_pandas()
@@ -24,8 +24,7 @@ Analysis functions for flight telemetry data.
 # Data Loading
 # =============================================================================
 
-def load_flight(tail: str, batch: int, flight: int, 
-                base_dir: str = 'data/processed/telemetry') -> pl.DataFrame:
+def load_flight(tail: str, batch: int, flight: int) -> pl.DataFrame:
     """
     Load a single flight's parquet file.
     
@@ -33,20 +32,19 @@ def load_flight(tail: str, batch: int, flight: int,
         tail: Tail number (e.g., '652')
         batch: Batch number (e.g., 1)
         flight: Flight number (e.g., 1)
-        base_dir: Base directory for telemetry data
         
     Returns:
         Polars DataFrame with all signals
     """
-    path = Path(base_dir) / f"tail_number={tail}" / f"batch={batch}" / f"flight_{flight:03d}.parquet"
+    path = get_path('telemetry') / f"tail_number={tail}" / f"batch={batch}" / f"flight_{flight:03d}.parquet"
     if not path.exists():
         raise FileNotFoundError(f"Flight not found: {path}")
     return pl.read_parquet(path)
 
 
-def load_flights_for_tail(tail: str, base_dir: str = 'data/processed/telemetry') -> List[pl.DataFrame]:
+def load_flights_for_tail(tail: str) -> List[pl.DataFrame]:
     """Load all flights for a given tail number."""
-    tail_path = Path(base_dir) / f"tail_number={tail}"
+    tail_path = get_path('telemetry') / f"tail_number={tail}"
     if not tail_path.exists():
         raise FileNotFoundError(f"Tail not found: {tail_path}")
 
@@ -56,15 +54,15 @@ def load_flights_for_tail(tail: str, base_dir: str = 'data/processed/telemetry')
     return flights
 
 
-def load_metadata(path: str = 'data/processed/flight_metadata.parquet') -> pl.DataFrame:
+def load_metadata() -> pl.DataFrame:
     """Load flight metadata."""
-    return pl.read_parquet(path)
+    return pl.read_parquet(get_path('metadata'))
 
 
-def get_available_tails(base_dir: str = 'data/processed/telemetry') -> List[str]:
+def get_available_tails() -> List[str]:
     """List all available tail numbers."""
     tails = []
-    for p in Path(base_dir).glob('tail_number=*'):
+    for p in get_path('telemetry').glob('tail_number=*'):
         tail = p.name.replace('tail_number=', '')
         tails.append(tail)
     return sorted(tails)
@@ -356,42 +354,5 @@ def analyze_tail(tail: str, max_flights: int = 5) -> None:
 
     return flights
 
-# Usage in notebook or script:
 
-import sys
-sys.path.insert(0, '..')
-from src.analysis import *
 
-# Check what tails are available
-print(get_available_tails())
-
-# Quick summary
-quick_flight_summary('652', 1, 1)
-
-# Load and plot single flight
-df = load_flight('652', 1, 1)
-plot_altitude_profile(df, title='Tail 652, Batch 1, Flight 1')
-plt.show()
-
-# Plot with flight phases
-plot_altitude_with_phases(df, title='Tail 652 Flight Phases')
-plt.show()
-
-# Compare multiple flights
-flights = [
-    ('Flight 1', load_flight('652', 1, 1)),
-    ('Flight 2', load_flight('652', 1, 2)),
-    ('Flight 3', load_flight('652', 1, 3)),
-]
-plot_altitude_comparison(flights)
-plt.show()
-
-# Compare stats
-print(compare_flights_stats(flights))
-
-# Distribution analysis
-plot_altitude_distribution(flights)
-plt.show()
-
-# Quick tail analysis
-analyze_tail('652', max_flights=5)
