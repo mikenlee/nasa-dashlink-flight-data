@@ -5,16 +5,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 from src.config import get_path, PATHS
 
-def plot_altitude_profile(df: pl.DataFrame, title: str = None):
-    alt = df.select(['sample_index', 'ALT']).to_pandas()
-    plt.figure(figsize=(12, 4))
-    plt.plot(alt['sample_index'] / 4 / 60, alt['ALT'])  # 4 Hz, convert to minutes
-    plt.xlabel('Time (minutes)')
-    plt.ylabel('Altitude (ft)')
-    if title:
-        plt.title(title)
-    return plt.gcf()
-
 """
 Analysis functions for flight telemetry data.
 """

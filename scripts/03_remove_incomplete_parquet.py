@@ -2,6 +2,7 @@
 """
 Usage:
     python scripts/03_remove_incomplete_parquet.py
+    run before running 02_rebuild_flight_metadata.py
 """
 import polars as pl
 from pathlib import Path
