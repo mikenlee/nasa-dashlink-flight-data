@@ -18,5 +18,6 @@ src/__pycache__/
 
 # Environment
 .venv/
+.venv312
 
 .claude
